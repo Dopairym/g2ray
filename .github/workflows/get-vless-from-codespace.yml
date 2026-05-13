@@ -1,4 +1,4 @@
-name: Get VLESS Link from Running Codespace
+name: Get VLESS Link
 
 on:
   workflow_dispatch:
@@ -9,40 +9,13 @@ on:
         type: string
 
 jobs:
-  retrieve-link:
+  run-script:
     runs-on: ubuntu-latest
     steps:
-      - name: Install GitHub CLI (already present)
-        run: gh --version
-
-      - name: Authenticate GitHub CLI with PAT
+      - name: Authenticate GitHub CLI
         run: echo "${{ secrets.CODESPACE_READ_TOKEN }}" | gh auth login --with-token
 
-      - name: Fetch codespace logs and extract VLESS link
-        id: getlink
+      - name: Execute start script inside codespace and get full output
         run: |
-          # Fetch the terminal logs (use --follow false to avoid streaming)
-          gh codespace logs -c "${{ github.event.inputs.codespace_name }}" --follow false > codespace.log 2>&1
-
-          # Extract the first VLESS link (starts with "vless://")
-          VLESS_LINK=$(grep -o 'vless://[^ ]*' codespace.log | head -1)
-
-          if [ -z "$VLESS_LINK" ]; then
-            echo "❌ No VLESS link found in logs (maybe the codespace isn't attached yet?)."
-            exit 1
-          fi
-
-          echo "VLESS link found!"
-          # Print it to the log
-          echo "$VLESS_LINK"
-          # Store for later steps
-          echo "link=$VLESS_LINK" >> $GITHUB_OUTPUT
-
-      - name: Save link as artifact (optional – private)
-        run: echo "${{ steps.getlink.outputs.link }}" > vless-link.txt
-
-      - name: Upload private artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vless-link-from-codespace
-          path: vless-link.txt
+          gh codespace ssh -c "${{ github.event.inputs.codespace_name }}" \
+            --command "/usr/local/bin/start-xray.sh"
