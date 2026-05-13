@@ -1,4 +1,4 @@
-name: Get VLESS Link (diagnostic)
+name: Get VLESS Link (Final)
 
 on:
   workflow_dispatch:
@@ -9,28 +9,60 @@ on:
         type: string
 
 jobs:
-  diagnose-and-run:
+  get-link:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. Authenticate GitHub CLI
+      - name: Authenticate with GitHub CLI
         run: echo "${{ secrets.CODESPACE_READ_TOKEN }}" | gh auth login --with-token
 
-      - name: 2. Check token scopes (must include "codespace")
+      - name: Check token scope (must say "codespace")
         run: gh auth status
 
-      - name: 3. List your codespaces
-        run: gh codespace list
-
-      - name: 4. Test basic SSH connectivity (run a simple command)
+      - name: Ensure codespace is running
         run: |
-          gh codespace ssh -c "${{ github.event.inputs.codespace_name }}" --command "echo 'SSH OK'"
+          STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$CODESPACE_NAME\") | .state")
+          if [ "$STATE" = "Shutdown" ]; then
+            echo "Codespace is stopped. Starting now..."
+            gh codespace start -c "$CODESPACE_NAME"
+            sleep 10
+          elif [ -z "$STATE" ]; then
+            echo "❌ Codespace with name '$CODESPACE_NAME' not found."
+            exit 1
+          else
+            echo "Status: $STATE"
+          fi
+        env:
+          CODESPACE_NAME: ${{ github.event.inputs.codespace_name }}
 
-      - name: 5. Run start-xray.sh and capture everything
+      - name: Run start-xray.sh and capture full output
         run: |
-          gh codespace ssh -c "${{ github.event.inputs.codespace_name }}" \
-            --command "/usr/local/bin/start-xray.sh" 2>&1 | tee output.log
-        continue-on-error: true
+          rm -f output.log
+          set +e  # Don't stop on error so we can show the output
+          gh codespace ssh -c "$CODESPACE_NAME" --command "/usr/local/bin/start-xray.sh" 2>&1 | tee output.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "Exit code: $EXIT_CODE"
+          # If the script ran, we should see a vless:// link in the log
+          if grep -q "vless://" output.log; then
+            echo "✅ VLESS link found!"
+          else
+            echo "⚠️ No VLESS link found. See full output above."
+          fi
+          exit $EXIT_CODE
+        env:
+          CODESPACE_NAME: ${{ github.event.inputs.codespace_name }}
 
-      - name: 6. Show captured output (if script failed)
+      - name: Extract and save link to artifact
         if: always()
-        run: cat output.log 2>/dev/null || echo "No output file generated"
+        run: |
+          LINK=$(grep -o 'vless://[^ ]*' output.log | head -1)
+          if [ -n "$LINK" ]; then
+            echo "$LINK" > vless-link.txt
+          else
+            echo "Link not found" > vless-link.txt
+          fi
+
+      - name: Upload private artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vless-link-output
+          path: vless-link.txt
