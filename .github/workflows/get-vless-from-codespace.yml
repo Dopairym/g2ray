@@ -1,4 +1,4 @@
-name: Get VLESS Link
+name: Get VLESS Link (diagnostic)
 
 on:
   workflow_dispatch:
@@ -9,13 +9,28 @@ on:
         type: string
 
 jobs:
-  run-script:
+  diagnose-and-run:
     runs-on: ubuntu-latest
     steps:
-      - name: Authenticate GitHub CLI
+      - name: 1. Authenticate GitHub CLI
         run: echo "${{ secrets.CODESPACE_READ_TOKEN }}" | gh auth login --with-token
 
-      - name: Execute start script inside codespace and get full output
+      - name: 2. Check token scopes (must include "codespace")
+        run: gh auth status
+
+      - name: 3. List your codespaces
+        run: gh codespace list
+
+      - name: 4. Test basic SSH connectivity (run a simple command)
+        run: |
+          gh codespace ssh -c "${{ github.event.inputs.codespace_name }}" --command "echo 'SSH OK'"
+
+      - name: 5. Run start-xray.sh and capture everything
         run: |
           gh codespace ssh -c "${{ github.event.inputs.codespace_name }}" \
-            --command "/usr/local/bin/start-xray.sh"
+            --command "/usr/local/bin/start-xray.sh" 2>&1 | tee output.log
+        continue-on-error: true
+
+      - name: 6. Show captured output (if script failed)
+        if: always()
+        run: cat output.log 2>/dev/null || echo "No output file generated"
